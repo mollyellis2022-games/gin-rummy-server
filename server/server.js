@@ -414,6 +414,23 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
         game.matchWinner = loser === 0 ? 1 : 0;
       }
 
+      room.broadcast({
+        type: "round_end",
+        winType: "gin",
+        winner: playerId,
+        hands: {
+          0: game.players[0].hand,
+          1: game.players[1].hand,
+        },
+        deadwoodPoints: {
+          0: bestDeadwood(game.players[0].hand).points,
+          1: bestDeadwood(game.players[1].hand).points,
+        },
+        scores: game.scores,
+        targetScore: game.targetScore,
+      });
+
+
       sendState();
 
       if (!game.matchOver) setTimeout(() => startRound(), 1200);
