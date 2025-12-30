@@ -7,11 +7,22 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+const allowed = new Set([
+  "http://ellisandcodesigns.co.uk",
+  "http://www.ellisandcodesigns.co.uk",
+  "https://ellisandcodesigns.co.uk",
+  "https://www.ellisandcodesigns.co.uk",
+]);
+
+
+
+
 app.use(express.static("public"));
 
-server.listen(3000, "0.0.0.0", () => {
-  console.log("Server running on http://192.168.1.71:3000");
-});
+const port = process.env.PORT || 3000;
+server.listen(port);
+console.log(`Server listening on port ${port}`);
+
 
 /* =========================== CARD / RULE HELPERS =========================== */
 
@@ -471,124 +482,137 @@ function removeSocketFromRoom(ws) {
   room.game = null;
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  const origin = req.headers.origin;
+
+   if (origin && !allowed.has(origin)) {
+     console.log("Blocked WS origin:", origin);
+     ws.close();
+     return;
+  }
+  
+    console.log("WS connected origin:", origin);
   // don’t auto-assign playerId anymore; that happens on join/create
   ws.playerId = null;
   ws.roomCode = null;
 
-  ws.on("message", (raw) => {
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return;
-    }
-
-    // ====== CREATE ROOM ======
-    if (data.type === "create_room") {
-      const code = String(data.code || "")
-        .toUpperCase()
-        .trim();
-      const playersNeeded = Number(data.playersNeeded || 2);
-      const pointsTarget = Number(data.pointsTarget || 10);
-
-      if (!code || code.length < 4) {
-        safeSend(ws, { type: "join_error", message: "Invalid room code." });
+    ws.on("message", (raw) => {
+      let data;
+      try {
+        data = JSON.parse(raw.toString()); // ✅ important
+      } catch {
         return;
       }
 
-      // current server logic supports 2 players only
-      if (playersNeeded !== 2) {
-        safeSend(ws, {
-          type: "join_error",
-          message: "4-player not supported yet (2-player only for now).",
+      // ====== CREATE ROOM ======
+      if (data.type === "create_room") {
+        const code = String(data.code || "")
+          .toUpperCase()
+          .trim();
+        const playersNeeded = Number(data.playersNeeded || 2);
+        const pointsTarget = Number(data.pointsTarget || 10);
+
+        if (!code || code.length < 4) {
+          safeSend(ws, { type: "join_error", message: "Invalid room code." });
+          return;
+        }
+
+        // current server logic supports 2 players only
+        if (playersNeeded !== 2) {
+          safeSend(ws, {
+            type: "join_error",
+            message: "4-player not supported yet (2-player only for now).",
+          });
+          return;
+        }
+
+        if (Rooms.hasRoom(code)) {
+          safeSend(ws, {
+            type: "join_error",
+            message: "Code already exists. Try again.",
+          });
+          return;
+        }
+
+        const room = makeRoom({
+          code,
+          playersNeeded,
+          targetScore: pointsTarget,
         });
+        Rooms.setRoom(code, room);
+
+        ws.roomCode = code;
+        ws.playerId = 0;
+        room.sockets.push(ws);
+
+        safeSend(ws, { type: "init", playerId: 0 });
+        room.sendRoomUpdate();
         return;
       }
 
-      if (Rooms.hasRoom(code)) {
-        safeSend(ws, {
-          type: "join_error",
-          message: "Code already exists. Try again.",
-        });
+      // ====== JOIN ROOM ======
+      if (data.type === "join_room") {
+        const code = String(data.code || "")
+          .toUpperCase()
+          .trim();
+        const room = Rooms.getRoom(code);
+
+        if (!room) {
+          safeSend(ws, { type: "join_error", message: "Room not found." });
+          return;
+        }
+
+        if (room.sockets.length >= room.playersNeeded) {
+          safeSend(ws, { type: "join_error", message: "Room is full." });
+          return;
+        }
+
+        ws.roomCode = code;
+        ws.playerId = room.sockets.length;
+        room.sockets.push(ws);
+
+        safeSend(ws, { type: "init", playerId: ws.playerId });
+        safeSend(ws, { type: "join_ok", code });
+
+        room.sendRoomUpdate();
         return;
       }
 
-      const room = makeRoom({ code, playersNeeded, targetScore: pointsTarget });
-      Rooms.setRoom(code, room);
+      // ====== START GAME (host only) ======
+      if (data.type === "start_game") {
+        const code = String(data.code || "")
+          .toUpperCase()
+          .trim();
+        const room = Rooms.getRoom(code);
 
-      ws.roomCode = code;
-      ws.playerId = 0;
-      room.sockets.push(ws);
+        if (!room) return;
+        if (ws.roomCode !== code) return;
+        if (ws.playerId !== 0) return; // host-only
+        if (room.sockets.length < room.playersNeeded) {
+          safeSend(ws, {
+            type: "join_error",
+            message: "Need more players to start.",
+          });
+          return;
+        }
 
-      safeSend(ws, { type: "init", playerId: 0 });
-      room.sendRoomUpdate();
-      return;
-    }
+        room.broadcast({ type: "game_start", code });
+        room.startRound();
+        return;
+      }
 
-    // ====== JOIN ROOM ======
-    if (data.type === "join_room") {
-      const code = String(data.code || "")
-        .toUpperCase()
-        .trim();
+      // ====== GAME ACTIONS ======
+      // All your existing actions flow through here
+      const code = ws.roomCode;
+      if (!code) return;
+
       const room = Rooms.getRoom(code);
-
-      if (!room) {
-        safeSend(ws, { type: "join_error", message: "Room not found." });
-        return;
-      }
-
-      if (room.sockets.length >= room.playersNeeded) {
-        safeSend(ws, { type: "join_error", message: "Room is full." });
-        return;
-      }
-
-      ws.roomCode = code;
-      ws.playerId = room.sockets.length;
-      room.sockets.push(ws);
-
-      safeSend(ws, { type: "init", playerId: ws.playerId });
-      safeSend(ws, { type: "join_ok", code });
-
-      room.sendRoomUpdate();
-      return;
-    }
-
-    // ====== START GAME (host only) ======
-    if (data.type === "start_game") {
-      const code = String(data.code || "")
-        .toUpperCase()
-        .trim();
-      const room = Rooms.getRoom(code);
-
       if (!room) return;
-      if (ws.roomCode !== code) return;
-      if (ws.playerId !== 0) return; // host-only
-      if (room.sockets.length < room.playersNeeded) {
-        safeSend(ws, {
-          type: "join_error",
-          message: "Need more players to start.",
-        });
-        return;
-      }
 
-      room.broadcast({ type: "game_start", code });
-      room.startRound();
-      return;
-    }
+      if (typeof ws.playerId !== "number") return;
 
-    // ====== GAME ACTIONS ======
-    // All your existing actions flow through here
-    const code = ws.roomCode;
-    if (!code) return;
-
-    const room = Rooms.getRoom(code);
-    if (!room) return;
-
-    if (typeof ws.playerId !== "number") return;
-
-    room.handleAction(ws.playerId, data);
-  });
+      room.handleAction(ws.playerId, data);
+    });
 
   ws.on("close", () => {
     removeSocketFromRoom(ws);
