@@ -26,6 +26,8 @@ console.log(`Server listening on port ${port}`);
 
 /* =========================== CARD / RULE HELPERS =========================== */
 
+/* =========================== CARD / RULE HELPERS =========================== */
+
 const rankOrder = {
   A: 1,
   2: 2,
@@ -196,6 +198,36 @@ function countDeadwoodCards(hand) {
   return bestDeadwood(hand).count;
 }
 
+function layoutFromBestDeadwood(hand) {
+  // Rebuild meld groups + deadwood cards from bestDeadwood’s bitmasks
+  const cards = hand.filter(Boolean);
+  const bd = bestDeadwood(cards);
+
+  const usedMask = bd.usedMask || 0;
+  const chosenMasks = bd.chosenMasks || [];
+
+  const meldGroups = chosenMasks.map((mask) => {
+    const group = [];
+    for (let i = 0; i < cards.length; i++) {
+      if (mask & (1 << i)) group.push(cards[i]);
+    }
+    return group;
+  });
+
+  // Deadwood = not in usedMask
+  const deadwood = [];
+  for (let i = 0; i < cards.length; i++) {
+    if (!(usedMask & (1 << i))) deadwood.push(cards[i]);
+  }
+
+  return {
+    meldGroups,
+    deadwood,
+    deadwoodPoints: bd.points,
+    deadwoodCount: bd.count,
+  };
+}
+
 /* =========================== DECK HELPERS =========================== */
 
 function createDeck() {
@@ -279,6 +311,7 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
       winner: null,
       winType: null,
       roundId: nextRoundId,
+      lastHandOrder: { 0: [], 1: [] },
 
       scores: existingScores ?? [0, 0],
       targetScore: targetScoreLocal ?? targetScore,
@@ -340,6 +373,15 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
     const game = room.game;
     if (!game) return;
 
+    
+    if (action.type === "hand_order") {
+      // store last known order for this player
+      if (Array.isArray(action.order)) {
+        game.lastHandOrder[playerId] = action.order.slice();
+      }
+      return;
+    }
+
     if (game.matchOver && action.type !== "rematch") return;
     if (game.roundOver && action.type !== "rematch") return;
     if (playerId !== game.currentPlayer && action.type !== "rematch") return;
@@ -386,6 +428,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
       return;
     }
 
+
+
     if (action.type === "gin") {
       if (game.phase !== "discard") return;
 
@@ -430,10 +474,44 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
         targetScore: game.targetScore,
       });
 
+      // ✅ NEW: round reveal payload (reveal the LOSER’s hand, since their deadwood adds to their own score)
+      const winnerId = playerId;
+      const loserId = opponent;
+
+      const layouts = {
+        0: layoutFromBestDeadwood(game.players[0].hand),
+        1: layoutFromBestDeadwood(game.players[1].hand),
+      };
+
+      room.broadcast({
+        type: "round_reveal",
+        code: room.code,
+        roundId: game.roundId,
+
+        winner: winnerId,
+        loser: loserId,
+        winType: "gin",
+
+        hands: {
+          0: game.players[0].hand,
+          1: game.players[1].hand,
+        },
+
+        handOrders: {
+          0: game.lastHandOrder?.[0] || [],
+          1: game.lastHandOrder?.[1] || [],
+        },
+
+        layouts,
+
+        scores: game.scores,
+        targetScore: game.targetScore,
+      });
 
       sendState();
 
-      if (!game.matchOver) setTimeout(() => startRound(), 1200);
+      if (!game.matchOver) setTimeout(() => startRound(), 9000);
+
       return;
     }
 
@@ -442,6 +520,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
       sendState();
 
       if (game.rematchVotes[0] && game.rematchVotes[1]) {
+        game.rematchVotes = [false, false];
+        game.lastHandOrder = { 0: [], 1: [] };
         game.scores = [0, 0];
         game.matchOver = false;
         game.matchWinner = null;
@@ -450,6 +530,7 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
         game.winType = null;
         game.roundMessage = null;
         game.roundMessageTs = null;
+
         startRound();
       }
       return;
@@ -501,6 +582,7 @@ function removeSocketFromRoom(ws) {
 
 wss.on("connection", (ws, req) => {
   const origin = req.headers.origin;
+console.log("WS connection attempt, origin =", origin);
 
    if (origin && !allowed.has(origin)) {
      console.log("Blocked WS origin:", origin);
