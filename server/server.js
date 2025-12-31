@@ -24,7 +24,6 @@ server.listen(port);
 console.log(`Server listening on port ${port}`);
 
 
-/* =========================== CARD / RULE HELPERS =========================== */
 
 /* =========================== CARD / RULE HELPERS =========================== */
 
@@ -78,6 +77,20 @@ function replenishDeckFromDiscard(game) {
   game.discardPile = [top];
   return true;
 }
+
+
+function maybeReplenish(game) {
+  const before = game.deck.length;
+  const did = replenishDeckFromDiscard(game);
+  if (!did) return null;
+
+  return {
+    before,
+    after: game.deck.length,
+    ts: Date.now(),
+  };
+}
+
 
 /* =========================== MELDS / DEADWOOD =========================== */
 
@@ -334,6 +347,13 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
   function sendState() {
     if (!room.game) return;
 
+    // ✅ If we're in draw phase and deck is empty, replenish immediately
+    // so clients don't show 0 and so you can trigger shuffle anim.
+    let replenishInfo = null;
+    if (room.game.phase === "draw" && room.game.deck.length === 0) {
+      replenishInfo = maybeReplenish(room.game);
+    }
+
     room.sockets.forEach((ws, index) => {
       const hand = room.game.players[index].hand;
       const bd = bestDeadwood(hand);
@@ -347,6 +367,10 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
           discardTop: room.game.discardPile.at(-1),
 
           deckCount: room.game.deck.length,
+
+          // ✅ NEW: tell client a shuffle happened (for animation)
+          deckReplenished: replenishInfo ? true : false,
+          deckReplenishInfo: replenishInfo, // {before, after, ts} or null
 
           roundOver: room.game.roundOver,
           winner: room.game.winner,
@@ -389,7 +413,16 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
     if (action.type === "draw-deck") {
       if (game.phase !== "draw") return;
 
-      if (game.deck.length === 0) replenishDeckFromDiscard(game);
+      const info = maybeReplenish(game);
+      if (info) {
+        room.broadcast({
+          type: "deck_reshuffle",
+          code: room.code,
+          deckCount: info.after,
+          info,
+        });
+      }
+
       if (game.deck.length === 0) return;
 
       const card = game.deck.pop();
@@ -717,3 +750,5 @@ console.log("WS connection attempt, origin =", origin);
     removeSocketFromRoom(ws);
   });
 });
+
+
