@@ -25,6 +25,7 @@ console.log(`Server listening on port ${port}`);
 
 
 
+
 /* =========================== CARD / RULE HELPERS =========================== */
 
 const rankOrder = {
@@ -356,6 +357,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
 
     room.sockets.forEach((ws, index) => {
       const hand = room.game.players[index].hand;
+       const oppIndex = index === 0 ? 1 : 0;
+       const oppHandCount = room.game.players[oppIndex].hand.length;
       const bd = bestDeadwood(hand);
 
       ws.send(
@@ -367,6 +370,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
           discardTop: room.game.discardPile.at(-1),
 
           deckCount: room.game.deck.length,
+
+          oppHandCount,
 
           // ✅ NEW: tell client a shuffle happened (for animation)
           deckReplenished: replenishInfo ? true : false,
@@ -750,5 +755,6 @@ console.log("WS connection attempt, origin =", origin);
     removeSocketFromRoom(ws);
   });
 });
+
 
 
