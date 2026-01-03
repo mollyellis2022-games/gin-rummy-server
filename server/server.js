@@ -7,33 +7,20 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-/* DEV ENVIRONMENT - LOCALHOST */
-const allowed = new Set([
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-]);
-
-/*   CONNECT TO ONLINE SERVER 
 const allowed = new Set([
   "http://ellisandcodesigns.co.uk",
   "http://www.ellisandcodesigns.co.uk",
   "https://ellisandcodesigns.co.uk",
   "https://www.ellisandcodesigns.co.uk",
 ]);
-*/
-
 
 
 app.use(express.static("public"));
 const PORT = 3000;
 
-server.listen(PORT, () => {
-  console.log(`HTTP+WS server running on http://localhost:${PORT}`);
-});
-
-/*const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
 server.listen(port);
-console.log(`Server listening on port ${port}`);*/
+console.log(`Server listening on port ${port}`);
 
 
 /* =========================== CARD / RULE HELPERS =========================== */
@@ -765,3 +752,4 @@ console.log("WS connection attempt, origin =", origin);
     removeSocketFromRoom(ws);
   });
 });
+
