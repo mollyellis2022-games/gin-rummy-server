@@ -7,23 +7,33 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+/* DEV ENVIRONMENT - LOCALHOST */
+const allowed = new Set([
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+]);
+
+/*   CONNECT TO ONLINE SERVER 
 const allowed = new Set([
   "http://ellisandcodesigns.co.uk",
   "http://www.ellisandcodesigns.co.uk",
   "https://ellisandcodesigns.co.uk",
   "https://www.ellisandcodesigns.co.uk",
 ]);
-
+*/
 
 
 
 app.use(express.static("public"));
+const PORT = 3000;
 
-const port = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`HTTP+WS server running on http://localhost:${PORT}`);
+});
+
+/*const port = process.env.PORT || 3000;
 server.listen(port);
-console.log(`Server listening on port ${port}`);
-
-
+console.log(`Server listening on port ${port}`);*/
 
 
 /* =========================== CARD / RULE HELPERS =========================== */
@@ -513,8 +523,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
       });
 
       // ✅ NEW: round reveal payload (reveal the LOSER’s hand, since their deadwood adds to their own score)
-      const winnerId = playerId;
-      const loserId = opponent;
+      const winnerSeat = Number(playerId); // MUST be 0 or 1
+      const loserSeat = Number(opponent); // MUST be 0 or 1
 
       const layouts = {
         0: layoutFromBestDeadwood(game.players[0].hand),
@@ -526,8 +536,8 @@ function makeRoom({ code, playersNeeded = 2, targetScore = 10 }) {
         code: room.code,
         roundId: game.roundId,
 
-        winner: winnerId,
-        loser: loserId,
+        winner: winnerSeat,
+        loser: loserSeat,
         winType: "gin",
 
         hands: {
@@ -755,6 +765,3 @@ console.log("WS connection attempt, origin =", origin);
     removeSocketFromRoom(ws);
   });
 });
-
-
-
